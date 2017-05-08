@@ -1,0 +1,199 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "CloudFormation template for creating a single EC2 instance with public connectivity and copy contrail-install-packages",
+
+  "Parameters" : {
+    
+    "KeyPairName" : {
+      "Description" : "Name of an existing EC2 KeyPair (find or create here: https://console.aws.amazon.com/ec2/v2/home#KeyPairs: )",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "ServerAccess" : {
+      "Description" : "CIDR IP range allowed to login to the Contrail instance",
+      "Type" : "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default" : "0.0.0.0/0",
+      "AllowedPattern" : "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription" : "must be a valid CIDR range of the form x.x.x.x/x."
+    }
+    
+  },
+
+  "Mappings" : {
+    "SubnetConfig" : {
+      "VPC"     : { "CIDR" : "10.44.0.0/16" },
+      "Public"  : { "CIDR" : "10.44.0.0/24" }
+    },
+    "RegionMap" : {
+      "us-east-1"      : { "AMI" : "ami-2df66d3b" },
+      "us-west-1"      : { "AMI" : "ami-f2b39792" }
+    }
+  },
+
+  "Resources" : {
+
+    "VPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Description" : "Creating a VPC",
+      "Properties" : {
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "VPC", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" },
+    { "Key" : "Name", "Value" : "Contrail VPC" }
+        ]
+      }
+    },
+
+    "PublicSubnet" : {
+      "DependsOn" : ["VPC"],
+      "Type" : "AWS::EC2::Subnet",
+      "Description" : "Creating a Subnet from VPC",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "Public", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" },
+    { "Key" : "Name", "Value" : "Public Subnet" }
+        ]
+      }
+    },
+
+    "InternetGateway" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "Description" : "Creating a InternetGW to allow traffic out to internet",
+      "Properties" : {
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" }
+        ]
+      }
+    },
+
+    "GatewayToInternet" : {
+       "DependsOn" : ["VPC", "InternetGateway"],
+       "Type" : "AWS::EC2::VPCGatewayAttachment",
+       "Properties" : {
+         "VpcId" : { "Ref" : "VPC" },
+         "InternetGatewayId" : { "Ref" : "InternetGateway" }
+       }
+    },
+
+    "PublicRouteTable" : {
+      "DependsOn" : ["VPC"],
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" }
+        ]
+      }
+    },
+
+    "PublicRoute" : {
+      "DependsOn" : ["PublicRouteTable", "InternetGateway"],
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "PublicRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "InternetGateway" }
+      }
+    },
+
+    "PublicSubnetRouteTableAssociation" : {
+      "DependsOn" : ["PublicSubnet", "PublicRouteTable"],
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "PublicSubnet" },
+        "RouteTableId" : { "Ref" : "PublicRouteTable" }
+      }
+    },
+    
+    "VMSecurityGroup" : {
+      "DependsOn" : ["VPC"],
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "VM Security Group",
+        "VpcId" : { "Ref" : "VPC" },
+  "SecurityGroupIngress" : [{
+            "IpProtocol" : "tcp",
+            "FromPort" : "22",
+            "ToPort" : "22",
+            "CidrIp" : { "Ref" : "ServerAccess" }
+        },{
+            "IpProtocol" : "tcp",
+            "FromPort" : "3389",
+            "ToPort" : "3389",
+            "CidrIp" : { "Ref" : "ServerAccess" }
+        }],
+  "Tags" : [
+    { "Key" : "Name", "Value" : "VM Security Group" }
+        ]
+      }
+    },
+
+    "VMSecurityGroupIngress1" : {
+      "DependsOn" : ["VMSecurityGroup"],
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+  "GroupId": { "Ref": "VMSecurityGroup" },
+  "IpProtocol": "tcp",
+  "FromPort": "8143",
+  "ToPort": "8143",
+  "SourceSecurityGroupId": { "Ref": "VMSecurityGroup" }
+      }
+    },
+
+    "VMSecurityGroupIngress2" : {
+      "DependsOn" : ["VMSecurityGroup"],
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+  "GroupId": { "Ref": "VMSecurityGroup" },
+  "IpProtocol": "tcp",
+  "FromPort": "80",
+  "ToPort": "80",
+  "SourceSecurityGroupId": { "Ref": "VMSecurityGroup" }
+      }
+    },
+
+    "Contrail" : {
+      "DependsOn" : ["PublicSubnet"],
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "InstanceType" : "t2.micro",
+        "KeyName"  : { "Ref" : "KeyPairName" },
+        "SourceDestCheck" : "false",
+        "ImageId" : { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+  "NetworkInterfaces" : [{
+          "GroupSet"                 : [{ "Ref" : "VMSecurityGroup" }],
+          "AssociatePublicIpAddress" : "true",
+          "DeviceIndex"              : "0",
+          "DeleteOnTermination"      : "true",
+          "SubnetId"                 : { "Ref" : "PublicSubnet" }
+        }],
+  "Tags" : [
+    { "Key" : "Name", "Value" : "Contrail" }
+        ],
+  "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+    "#!/bin/bash\n",
+      "export DEBIAN_FRONTEND=noninteractive\n",
+      "apt-get update\n",
+      "apt-get -y install tree\n",
+      "wget -P /root/ https://s3-us-west-1.amazonaws.com/contrail-install-packages/contrail-install-packages_3.2.1.0-29~mitaka_all.deb\n",
+      "dpkg -i /root/contrail-install-packages_3.2.1.0-29~mitaka_all.deb\n",
+      "cd /opt/contrail/contrail_packages;   ./setup.sh\n",
+  ]]}}
+      }
+    },
+
+  }
+}
