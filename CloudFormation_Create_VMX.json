@@ -1,0 +1,177 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "CloudFormation template for creating a single EC2 instance with public connectivity and copy contrail-install-packages",
+
+  "Parameters" : {
+    
+    "KeyPairName" : {
+      "Description" : "Name of an existing EC2 KeyPair (find or create here: https://console.aws.amazon.com/ec2/v2/home#KeyPairs: )",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "VolumeSize" : {
+      "Description" : "The size of the EBS volume to attach",
+      "Type" : "Number",
+      "Default" : "100"
+    },
+
+    "ServerAccess" : {
+      "Description" : "CIDR IP range allowed to login to the Contrail instance",
+      "Type" : "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default" : "0.0.0.0/0",
+      "AllowedPattern" : "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription" : "must be a valid CIDR range of the form x.x.x.x/x."
+    }
+    
+  },
+
+  "Mappings" : {
+    "SubnetConfig" : {
+      "VPC"     : { "CIDR" : "10.45.0.0/16" },
+      "Public"  : { "CIDR" : "10.45.0.0/24" },
+      "Private" : { "CIDR" : "10.45.1.0/24" }
+    },
+    "RegionMap" : {
+      "us-west-1"      : { "AMI" : "ami-b2148dd2" },
+      "us-west-2"      : { "AMI" : "ami-b2148dd2" },
+      "eu-west-1"      : { "AMI" : "ami-b2148dd2" }
+    }
+  },
+
+  "Resources" : {
+
+    "VPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Description" : "Creating a VPC",
+      "Properties" : {
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "VPC", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" },
+    { "Key" : "Name", "Value" : "Contrail VPC" }
+        ]
+      }
+    },
+
+    "PublicSubnet" : {
+      "DependsOn" : ["VPC"],
+      "Type" : "AWS::EC2::Subnet",
+      "Description" : "Creating a Subnet from VPC",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "Public", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "VMXPublic" },
+    { "Key" : "Name", "Value" : "Public Subnet" }
+        ]
+      }
+    },
+
+    "InternetGateway" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "Description" : "Creating a InternetGW to allow traffic out to internet",
+      "Properties" : {
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" }
+        ]
+      }
+    },
+
+    "GatewayToInternet" : {
+       "DependsOn" : ["VPC", "InternetGateway"],
+       "Type" : "AWS::EC2::VPCGatewayAttachment",
+       "Properties" : {
+         "VpcId" : { "Ref" : "VPC" },
+         "InternetGatewayId" : { "Ref" : "InternetGateway" }
+       }
+    },
+
+    "PublicRouteTable" : {
+      "DependsOn" : ["VPC"],
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "Tags" : [
+          { "Key" : "Application", "Value" : { "Ref" : "AWS::StackName" } },
+          { "Key" : "Network", "Value" : "Public" }
+        ]
+      }
+    },
+
+    "PublicRoute" : {
+      "DependsOn" : ["PublicRouteTable", "InternetGateway"],
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "PublicRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "InternetGateway" }
+      }
+    },
+
+    "PublicSubnetRouteTableAssociation" : {
+      "DependsOn" : ["PublicSubnet", "PublicRouteTable"],
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "PublicSubnet" },
+        "RouteTableId" : { "Ref" : "PublicRouteTable" }
+      }
+    },
+    
+    "VMXSecurityGroup" : {
+      "DependsOn" : ["VPC"],
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "VMX Security Group",
+        "VpcId" : { "Ref" : "VPC" },
+  "SecurityGroupIngress" : [{
+            "IpProtocol" : "tcp",
+            "FromPort" : "22",
+            "ToPort" : "22",
+            "CidrIp" : { "Ref" : "ServerAccess" }
+        },{
+            "IpProtocol" : "tcp",
+            "FromPort" : "3389",
+            "ToPort" : "33197",
+            "CidrIp" : { "Ref" : "ServerAccess" }
+        }],
+  "Tags" : [
+    { "Key" : "Name", "Value" : "VMX Security Group" }
+        ]
+      }
+    },
+    
+    "VMX" : {
+      "DependsOn" : ["PublicSubnet", "VMXSecurityGroup"],
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "InstanceType" : "m4.2xlarge",
+        "KeyName"  : { "Ref" : "KeyPairName" },
+        "SourceDestCheck" : "false",
+        "ImageId" : "ami-7d9b4a1d",
+  "NetworkInterfaces" : [{
+          "GroupSet"                 : [{ "Ref" : "VMXSecurityGroup" }],
+          "AssociatePublicIpAddress" : "true",
+          "DeviceIndex"              : "0",
+          "DeleteOnTermination"      : "true",
+          "SubnetId"                 : { "Ref" : "PublicSubnet" }
+        }],
+  "Tags" : [
+    { "Key" : "Name", "Value" : "VMX" }
+        ],
+  "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+    "#!/bin/bash\n",
+  ]]}}
+      }
+    },
+
+  }
+}

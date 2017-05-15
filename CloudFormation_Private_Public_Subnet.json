@@ -4,7 +4,7 @@
   "Description" : "CloudFormation template for a generic VPC with public and private subnets (with private network Internet access via NAT)",
 
   "Parameters" : {
-    
+
     "KeyPairName" : {
       "Description" : "Name of an existing EC2 KeyPair (find or create here: https://console.aws.amazon.com/ec2/v2/home#KeyPairs: )",
       "Type" : "String",
@@ -23,7 +23,7 @@
       "AllowedPattern" : "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
       "ConstraintDescription" : "must be a valid CIDR range of the form x.x.x.x/x."
     }
-    
+
   },
 
   "Mappings" : {
@@ -199,7 +199,7 @@
   "SourceSecurityGroupId": { "Ref": "NatSecurityGroup" }
       }
     },
-    
+
     "NatSecurityGroupIngress3389" : {
       "DependsOn" : ["NatSecurityGroup"],
       "Type": "AWS::EC2::SecurityGroupIngress",
@@ -312,7 +312,7 @@
     "yum update -y && yum install -y yum-cron && chkconfig yum-cron on"
   ]]}}
       }
-    },  
+    },
 
     "PrivateRoute" : {
       "DependsOn" : ["PrivateRouteTable", "NAT"],
@@ -332,5 +332,5 @@
       "Value" : { "Fn::GetAtt" : [ "NAT", "PublicIp" ] }
     }
   }
-  
+
 }
