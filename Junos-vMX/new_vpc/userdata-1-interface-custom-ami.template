@@ -1,0 +1,454 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+    "SSHKey": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Default": "Lab"
+    },
+    "TerminationProtection": {
+      "Description": "Enable termination protection on the CSR EC2 instances to avoid accidential CSR termination?",
+      "Type": "String",
+      "Default": "No",
+      "AllowedValues": [
+        "Yes",
+        "No"
+      ]
+    },
+    "vMXInstance": {
+      "Description": "The Instance type that is needed",
+      "Type": "String",
+      "Default": "m4.10xlarge",
+      "AllowedValues": [
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "c3.2xlarge",
+        "c3.4xlarge",
+        "c3.8xlarge",
+        "c4.4xlarge",
+        "c4.8xlarge"
+      ]
+    },
+    "vMXAMI" : {
+      "Description": "Choose the AMI that will be used for the vMX instance",
+      "Type": "AWS::EC2::Image::Id"
+    },
+    "vMXCIDR" : {
+      "Description" : "CIDR block for vMX VPC.",
+      "Type" : "String",
+      "Default" : "10.150.0.0/16",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "vMXSubCIDR0": {
+      "Description": "Enter the Subnet Prefix to where the Managmement Interface will go",
+      "Type" : "String",
+      "Default": "10.150.0.0/24",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "vMXSubCIDR1": {
+      "Description": "Choose the Subnet where the WAN Interface will go",
+      "Type" : "String",
+      "Default": "10.150.1.0/24",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "vMXfxp0IP": {
+      "Description": "Choose the IP address that will be assigned to the Managmement Interface",
+      "Type" : "String",
+      "Default": "10.150.0.254",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})",
+      "ConstraintDescription": "must be a valid IP Address of the form x.x.x.x"
+    },
+    "vMXge000IP": {
+      "Description": "Choose the IP address that will be assigned to the ge-0/0/0 Interface",
+      "Type" : "String",
+      "Default": "10.150.1.254",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})",
+      "ConstraintDescription": "must be a valid IP Address of the form x.x.x.x"
+    },
+    "vMXName": {
+      "Description": "Choose unique value that will be assigned to the Name of the vMX instance.",
+      "Type": "String",
+      "MaxLength": "16"
+    },
+    "TroubleshootvMX": {
+      "Description" : "Create an IP that allows access to the Host O/S for Troubleshooting",
+      "Type": "String",
+      "Default" : "No",
+      "AllowedValues" : [
+        "No",
+        "Yes, with Private IP only",
+        "Yes, with EIP"
+      ]
+    },
+    "MgmtEIP": {
+      "Description": "Make the Mangement IP reachable publicly",
+      "Type": "String",
+      "Default": "Yes",
+      "AllowedValues": [
+        "No",
+        "Yes"
+      ]
+    },
+    "AvailZone" : {
+      "Description" : "Choose the Availability Zone to create the subnets and launch the vMX instance.",
+      "Type": "AWS::EC2::AvailabilityZone::Name"
+    }
+  },
+  "Resources": {
+    "vMXInt0": {
+      "Type": "AWS::EC2::NetworkInterface",
+      "Properties": {
+        "Description": "vMX Management interface attached to fxp0.",
+        "PrivateIpAddress" : { "Ref" : "vMXfxp0IP" },
+        "SourceDestCheck" : "false",
+        "SubnetId": { "Ref": "vMXSubnet0" },
+        "SecondaryPrivateIpAddressCount" : { "Fn::If" : [ "cndvmxtshoot", "1", {"Ref" : "AWS::NoValue"} ] },
+        "GroupSet" : [ { "Ref" : "vMXSecGrp" } ],
+        "Tags" : [ { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "fxp0"]]} } ]
+      },
+      "Metadata": {}
+    },
+    "vMXInt1": {
+      "Type": "AWS::EC2::NetworkInterface",
+      "Properties": {
+        "Description": "vMX Management interface attached to ge-0/0/0.",
+        "PrivateIpAddress" : { "Ref" : "vMXge000IP" },
+        "GroupSet" : [ { "Ref" : "vMXSecGrp" } ],
+        "SourceDestCheck" : "false",
+        "SubnetId": {
+          "Ref": "vMXSubnet1"
+        },
+        "Tags" : [ { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "ge000"]]} } ]
+      },
+      "Metadata": {}
+    },
+    "vMXEIP0": {
+      "Type": "AWS::EC2::EIP",
+      "Condition": "cndvmxMgmtEIP",
+      "Properties": {
+          "Domain" : "vpc"
+      },
+      "Metadata": {}
+    },
+    "vMXEIP1": {
+      "Type": "AWS::EC2::EIP",
+      "Condition" : "cndvmxEIPtshoot",
+      "Properties": {
+          "Domain" : "vpc"
+      },
+      "Metadata": {}
+    },
+    "vMXEIP2": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+          "Domain" : "vpc"
+      },
+      "Metadata": {}
+    },
+    "AssociateEIP0Int0": {
+      "Type": "AWS::EC2::EIPAssociation",
+      "Condition": "cndvmxMgmtEIP",
+      "Properties": { 
+        "AllocationId": {  "Fn::GetAtt" : [ "vMXEIP0", "AllocationId" ] },
+        "NetworkInterfaceId" : { "Ref" : "vMXInt0" },
+        "PrivateIpAddress" : { "Fn::GetAtt" : [ "vMXInt0", "PrimaryPrivateIpAddress" ] }
+      }
+    },
+    "AssociateEIP1Int0": {
+      "Type": "AWS::EC2::EIPAssociation",
+      "Condition" : "cndvmxEIPtshoot",
+      "Properties": { 
+        "AllocationId": {  "Fn::GetAtt" : [ "vMXEIP1", "AllocationId" ] },
+        "NetworkInterfaceId" : { "Ref" : "vMXInt0" },
+        "PrivateIpAddress": { "Fn::Select" : [ "0", { "Fn::GetAtt" : ["vMXInt0", "SecondaryPrivateIpAddresses"] } ] }
+      }
+    },
+    "AssociateEIP2Int1": {
+      "Type": "AWS::EC2::EIPAssociation",
+      "Properties": { 
+        "AllocationId": {  "Fn::GetAtt" : [ "vMXEIP2", "AllocationId" ] },
+        "NetworkInterfaceId" : { "Ref" : "vMXInt1" },
+        "PrivateIpAddress" : { "Fn::GetAtt" : [ "vMXInt1", "PrimaryPrivateIpAddress" ] }
+      }
+    },
+    "vMXVPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : { "Ref" : "vMXCIDR" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "VPC"]]} }
+        ]
+      }
+    },
+    "vMXSubnet0" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "AvailabilityZone" : { "Ref": "AvailZone" },
+        "VpcId" : { "Ref" : "vMXVPC" },
+        "CidrBlock" : { "Ref" : "vMXSubCIDR0" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "Subnet-for-fxp0"]]} }
+        ]
+      }
+    },
+    "vMXSubnet1" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "AvailabilityZone" : { "Ref": "AvailZone" },  
+        "VpcId" : { "Ref" : "vMXVPC" },
+        "CidrBlock" : { "Ref" : "vMXSubCIDR1" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "Subnet-for-ge000"]]} }
+        ]
+      }
+    },
+    "IGW" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "Properties" : {
+        "Tags" : [
+          { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "IGW"]]} }
+        ]
+      }
+    },
+    "IGWToInternet" : {
+       "Type" : "AWS::EC2::VPCGatewayAttachment",
+       "Properties" : {
+         "VpcId" : { "Ref" : "vMXVPC" },
+         "InternetGatewayId" : { "Ref" : "IGW" }
+       }
+    },
+    "VPCRouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "vMXVPC" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : { "Fn::Join" : [ "-", [ { "Ref" : "vMXName" }, "RouteTable"]]} }
+        ]
+      }
+    },
+    "VPCPublicRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "VPCRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "IGW" }
+      }
+    },
+    "VPCSubnetRouteTableAssociation1" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "vMXSubnet0" },
+        "RouteTableId" : { "Ref" : "VPCRouteTable" }
+      }
+    },
+    "VPCSubnetRouteTableAssociation2" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "vMXSubnet1" },
+        "RouteTableId" : { "Ref" : "VPCRouteTable" }
+      }
+    },
+    "vMXSecGrp" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "vMX Security Group Rules",
+        "VpcId" : { "Ref" : "vMXVPC" },
+        "SecurityGroupIngress" : [
+           { "IpProtocol" : "-1", "FromPort" : "0",  "ToPort" : "65535", "CidrIp" : "0.0.0.0/0"} ],
+        "SecurityGroupEgress" : [
+           { "IpProtocol" : "-1", "FromPort" : "0", "ToPort" : "65535", "CidrIp" : "0.0.0.0/0" } ]
+      }
+    },
+    "vMX": {
+      "Type": "AWS::EC2::Instance",
+      "DependsOn": [ "vMXInt0", "vMXInt1" ], 
+      "Properties": {
+        "AvailabilityZone" : { "Ref": "AvailZone" },
+        "InstanceType": { "Ref": "vMXInstance" },
+        "KeyName": { "Ref": "SSHKey" },
+        "DisableApiTermination": { "Fn::If": ["cndEnableTerm", true, false] },
+        "ImageId": { "Ref": "vMXAMI" },
+        "UserData": { "Fn::Base64":{ "Fn::Join":[ "", [ 
+         "#junos-config\n",
+          "groups {\n",
+          "    global {\n",
+          "        system {\n",
+          "            host-name HOSTNAME;\n",
+          "            services {\n",
+          "                ssh {\n",
+          "                    root-login deny-password;\n",
+          "                }\n",
+          "            }\n",
+          "            login {\n",
+          "                user ec2-user {\n",
+          "                    uid 2000;\n",
+          "                    class super-user;\n",
+          "                    authentication {\n",
+          "                        ssh-rsa \"SSHRSAKEY\"; ## SECRET-DATA\n",
+          "                    }\n",
+          "                }\n",
+          "            }\n",
+          "            syslog {\n",
+          "                user * {\n",
+          "                    any emergency;\n",
+          "                }\n",
+          "                file messages {\n",
+          "                    any notice;\n",
+          "                    authorization info;\n",
+          "                }\n",
+          "                file interactive-commands {\n",
+          "                    interactive-commands any;\n",
+          "                }\n",
+          "            }\n",
+          "        }\n",
+          "        interfaces {\n",
+          "            fxp0 {\n",
+          "                unit 0 {\n",
+          "                    family inet {\n",
+          "                        address FXP0ADDR;\n",
+          "                    }\n",
+          "                }\n",
+          "            }\n",
+          "        }\n",
+          "        routing-options {\n",
+          "            static {\n",
+          "                route 0.0.0.0/0 {\n",
+          "                    next-hop GATEWAY;\n",
+          "                    retain;\n",
+          "                    no-readvertise;\n",
+          "                }\n",
+          "            }\n",
+          "        }\n",
+          "    }\n",
+          "}\n",
+          "apply-groups global;\n",
+          "\n"
+          ] ] }
+        },
+        "NetworkInterfaces" : [ { "NetworkInterfaceId" : {"Ref" : "vMXInt0"}, "DeviceIndex" : "0" },
+                            { "NetworkInterfaceId" : {"Ref" : "vMXInt1"}, "DeviceIndex" : "1" }],
+        "Tags" : [ { "Key" : "Name", "Value" : { "Ref" : "vMXName" } } ]
+      }
+    }
+  },
+  "Metadata": {
+   "AWS::CloudFormation::Interface": {
+     "ParameterGroups": [
+       {
+         "Label": {
+           "default": "Juniper vMX Configuration"
+         },
+         "Parameters": [
+           "vMXName",
+           "AvailZone",
+           "vMXAMI",
+           "vMXInstance",
+           "SSHKey",
+           "TerminationProtection",
+           "MgmtEIP",
+           "TroubleshootvMX"
+         ]
+       },
+       {
+         "Label": {
+           "default": "Network Configuration"
+         },
+         "Parameters": [
+           "vMXCIDR",
+           "vMXSubCIDR0",
+           "vMXSubCIDR1"
+         ]
+       },
+       {
+         "Label": {
+           "default": "Interface Static IP"
+         },
+         "Parameters": [
+           "vMXfxp0IP",
+           "vMXge000IP"
+         ]
+       }
+     ],
+     "ParameterLabels": {
+       "vMXCIDR": {
+         "default": "Network to assign to the VPC"
+       },
+       "vMXSubCIDR0": {
+         "default": "vMX Management Network (fxp0). Must be a subnet within the VPC CIDR."
+       },
+       "vMXSubCIDR1": {
+         "default": "Subnet to assign ge-0/0/0. Must be a subnet within the VPC CIDR."
+       },
+       "vMXInstance": {
+         "default": "vMX Throughput Requirements"
+       },
+       "SSHKey": {
+         "default": "SSH Key"
+       },
+       "LicenseModel": {
+         "default": "License Model"
+       },
+       "TerminationProtection": {
+         "default": "Enable Termination Protection"
+       },
+       "TroubleshootvMX": {
+         "default": "Troubleshooting IP"
+       },
+       "AvailZone" : {
+         "default": "Availability Zone"
+       },
+       "vMXAMI" : {
+         "default": "vMX Image"
+       }
+     }
+   }
+  },
+  "Conditions": {
+    "cndEnableTerm" : { "Fn::Equals": [ { "Ref": "TerminationProtection" }, "Yes" ] },
+    "cndvmxtshoot" : { "Fn::Or": [ { "Fn::Equals" : [ {"Ref": "TroubleshootvMX"}, "Yes, with Private IP only" ] }, { "Fn::Equals" : [ {"Ref": "TroubleshootvMX"}, "Yes, with EIP" ] } ] },
+    "cndvmxEIPtshoot" : { "Fn::Equals": [ {"Ref": "TroubleshootvMX"}, "Yes, with EIP"] },
+    "cndvmxMgmtEIP" : { "Fn::Equals": [ {"Ref": "MgmtEIP"}, "Yes" ] }
+  },
+  "Outputs": {
+    "AMI": {
+     "Description": "AMI Image used to launch instance",
+     "Value": { "Ref": "vMXAMI" }  
+    },
+    "AvailabilityZone" : {
+      "Description": "Availablity Zone the Instance was launched.",
+      "Value" : { "Ref" : "AvailZone" }        
+    },
+    "vMXMgmtEIP" : {
+      "Description" : "Mgmt (fxp0) EIP Address for vMX",
+      "Value" : { "Fn::GetAtt" : [ "vMX", "PublicIp" ] },
+      "Condition" : "cndvmxMgmtEIP"
+    },
+    "vMXMgmtIP" : {
+      "Description" : "Mgmt (fxp0) Private IP Address for vMX",
+      "Value" : { "Fn::GetAtt" : [ "vMXInt0", "PrimaryPrivateIpAddress" ] }
+    },
+    "vMXTroubleshootingIP" : {
+      "Description" : "Private IP to connect with for troubleshooting",
+      "Value" : { "Fn::Select" : [ "0", { "Fn::GetAtt" : ["vMXInt0", "SecondaryPrivateIpAddresses"] } ] },
+      "Condition" : "cndvmxtshoot"
+    },
+    "vMXTroubleshootingEIP" : {
+      "Description" : "EIP Alocation ID for the EIP address bound to the Private IP for troubleshooting",
+      "Value" : { "Ref" : "vMXEIP1" },
+      "Condition" : "cndvmxEIPtshoot"
+    },
+    "vMXge000EIP" : {
+        "Description": "ge-0/0/0 public IP to tunnel / traffic termination",
+        "Value" : { "Ref" : "vMXEIP2" }
+    },
+    "vMXge000Intaddr": {
+        "Description": "ge-0/0/0 IP address",
+        "Value" : { "Fn::GetAtt" : [ "vMXInt1", "PrimaryPrivateIpAddress" ] }
+    }
+  }
+}
